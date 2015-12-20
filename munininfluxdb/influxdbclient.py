@@ -3,7 +3,8 @@ import getpass
 import json
 from collections import defaultdict
 
-import influxdb.influxdb08 as influxdb
+#import influxdb.influxdb08 as influxdb
+import influxdb
 import rrd
 from utils import ProgressBar, parse_handle, Color, Symbol
 from rrd import read_xml_file
@@ -25,7 +26,7 @@ class InfluxdbClient:
                                              self.settings.influxdb['password'])
 
             # dummy request to test connection
-            client.get_database_list()
+            client.get_list_database()
         except influxdb.client.InfluxDBClientError as e:
             self.client, self.valid = None, False
             if not silent:
@@ -37,7 +38,7 @@ class InfluxdbClient:
             self.client, self.valid = client, True
 
         if self.settings.influxdb['database']:
-            self.client.switch_db(self.settings.influxdb['database'])
+            self.client.switch_database(self.settings.influxdb['database'])
 
         return self.valid
 
@@ -46,7 +47,7 @@ class InfluxdbClient:
         if not name:
             return False
 
-        db_list = self.client.get_database_list()
+        db_list = self.client.get_list_database()
         if not {'name': name} in db_list:
             if self.settings.interactive:
                 create = raw_input("{0} database doesn't exist. Would you want to create it? [y]/n: ".format(name)) or "y"
@@ -60,14 +61,14 @@ class InfluxdbClient:
                 return False
 
         try:
-            self.client.switch_db(name)
+            self.client.switch_database(name)
         except influxdb.client.InfluxDBClientError as e:
             print "Error: could not select database: ", e.message
             return False
 
         # dummy query to test db
         try:
-            res = self.client.query('list series')
+            res = self.client.query('show series')
         except influxdb.client.InfluxDBClientError as e:
             print "Error: could not query database: ", e.message
             return False
@@ -76,7 +77,7 @@ class InfluxdbClient:
 
     def list_db(self):
         assert self.client
-        db_list = self.client.get_database_list()
+        db_list = self.client.get_list_database()
         print "List of existing databases:"
         for db in db_list:
             print "  - {0}".format(db['name'])
@@ -159,6 +160,16 @@ class InfluxdbClient:
             "columns": columns,
             "points": points,
         }]
+        body = []
+        for point in points:
+            point_new = {'fields': {column: point[idx] for idx, column in enumerate(columns) }}
+            #TODO no hard-coded localdomain.
+            point_new['measurement'] = name.split('localdomain.')[-1]
+            if 'time' in point_new['fields']:
+                point_new['time'] = point_new['fields']['time'] * 1000000000
+                del point_new['fields']['time']
+            if None not in point_new['fields'].values():
+                body.append(point_new)
 
         try:
             self.client.write_points(body)
